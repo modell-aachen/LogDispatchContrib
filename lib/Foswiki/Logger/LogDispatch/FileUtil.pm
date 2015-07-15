@@ -3,7 +3,6 @@ package Foswiki::Logger::LogDispatch::FileUtil;
 
 use strict;
 use warnings;
-use utf8;
 use Assert;
 
 =begin TML
@@ -15,7 +14,7 @@ use Log::Dispatch to allow logging to almost anything.
 =cut
 
 use Log::Dispatch;
-use Foswiki::Time            ();
+use Foswiki::Time qw(-nofoswiki);
 use Foswiki::ListIterator    ();
 use Foswiki::Configure::Load ();
 

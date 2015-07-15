@@ -3,7 +3,6 @@ package Foswiki::Logger::LogDispatch;
 
 use strict;
 use warnings;
-use utf8;
 
 use Assert;
 
@@ -28,16 +27,10 @@ sub _time { return time() }
 use constant TRACE => 0;
 
 sub new {
-    my $class   = shift;
-    my $binmode = '';
-    my $log     = '';
+    my $class = shift;
+    my $binmode .= ":encoding(utf-8)";
+    my $log = '';
     my %methods;
-
-    if (   $Foswiki::cfg{Site}{CharSet}
-        && $Foswiki::cfg{Site}{CharSet} =~ /^utf-?8$/ )
-    {
-        $binmode .= ":encoding($Foswiki::cfg{Site}{CharSet})";
-    }
 
     return bless(
         {
@@ -138,7 +131,7 @@ can be called with an array of additional fields to log.
 
 sub log {
     my $this = shift;
-    my $fhash;
+    my $fhash;    # Hash of fields to be logged, either passed or built below
 
     # Native interface:  Just pass through the hash
     if ( ref( $_[0] ) eq 'HASH' ) {
@@ -172,17 +165,13 @@ sub log {
     Foswiki::Logger::setCommonFields($fhash)
       if ( $Foswiki::Plugins::VERSION > 2.2 );
 
+    # Collapse positional parameters into the "extra" field
     $fhash->{extra} = join( ' ', @{ $fhash->{extra} } )
       if ( ref( $fhash->{extra} ) eq 'ARRAY' );
 
-    $fhash->{logd} = $this;    # Logger object needed for some loggers.
-    $fhash->{message} ||=
-      '';    # Required field that will be overwritten by a callback.
-
     my $now = _time();
-    $fhash->{timestamp} = Foswiki::Time::formatTime( $now, 'iso', 'gmtime' );
-
-    $this->init() unless $this->{dispatch};
+    $fhash->{timestamp} =
+      Foswiki::Time::formatTime( $now, 'iso', 'servertime' );
 
     # Optional obfsucation of IP addresses for some locations.  However
     # preserve them for auth failures.
@@ -190,7 +179,12 @@ sub log {
         && $Foswiki::cfg{Log}{LogDispatch}{MaskIP} ne 'none'
         && defined $fhash->{remoteAddr} )
     {
-        unless ( $fhash->{extra} =~ /^AUTHENTICATION FAILURE/ ) {
+        unless (
+            $fhash->{level} eq 'notice'
+            || ( defined $fhash->{extra}
+                && $fhash->{extra} =~ /^AUTHENTICATION FAILURE/ )
+          )
+        {
 
             if ( $Foswiki::cfg{Log}{LogDispatch}{MaskIP} eq 'x.x.x.x' ) {
                 $fhash->{remoteAddr} = 'x.x.x.x';
@@ -209,16 +203,28 @@ sub log {
         }
     }
 
+    $this->init() unless $this->{dispatch};
+
+    my %loghash;    # Parameters for Log::Dispatch calls
+    $loghash{level} = $fhash->{level};
+    $loghash{message} ||=
+      '';           # Required field that will be overwritten by a callback.
+
+    # Extended data passsed through for use in callback
+    $loghash{_logd}   = $this;  # Logger object needed for some loggers.
+    $loghash{_fields} = $fhash; # Hash of fields to be assembled into "message".
+
     # Dispatch all of the registred output classes
-    $this->{dispatch}->log(%$fhash);
+    $this->{dispatch}->log(%loghash);
 
     # And any discrete logging per handler
+    # SMELL:  None of the loggers support this, so it hasn't been tested
     foreach my $method ( keys %{ $this->{methods} } ) {
         my $handler = $this->{methods}->{$method};
         if ( $handler->can('log') ) {
-            print STDERR " LogDispatch.pm thinks $method should LOG \n"
-              if TRACE;
-            $handler->log($fhash);
+            print STDERR
+              " LogDispatch.pm thinks $method should LOG \n";    #  if TRACE;
+            $handler->log(%loghash);
         }
     }
 }
@@ -235,35 +241,47 @@ fields into a single record per a format token.
 sub _flattenLog {
 
     my %logHash = @_;
+    my @fields  = keys %{ $logHash{_fields} };
 
-#use Data::Dumper qw( Dumper );
-#use Carp qw<longmess>;
-#my $mess = longmess();
-#print STDERR "===== CALLER =====\n" . Dumper ( $mess ) . "========\n";
-#print STDERR "===== INCOMING PARAMS ===\n" . Dumper( @_ ) . "========\n";
-#print STDERR "===== INCOMING HASH ===\n" . Dumper( %logHash ) . "========\n";
-#print STDERR "===== CONFIG HASH ===\n" . Dumper( $Foswiki::cfg{Log}{LogDispatch}{FlatLayout} ) . "========\n";
+    #use Data::Dumper qw( Dumper );
+    #use Carp qw<longmess>;
+    #print STDERR " KEYS IN CALL " . Data::Dumper::Dumper (\@fields);
+    #my $mess = longmess();
+    #print STDERR "===== CALLER =====\n" . Dumper($mess) . "========\n";
+    #print STDERR "===== INCOMING PARAMS ===\n" . Dumper(@_) . "========\n";
+    #print STDERR "===== INCOMING HASH ===\n" . Dumper(%logHash) . "========\n";
+    #print STDERR "===== CONFIG HASH ===\n"
+    #  . Dumper( $Foswiki::cfg{Log}{LogDispatch}{FlatLayout} )
+    #  . "========\n";
 
-    my $logLayout_ref = $logHash{Layout_ref};
+    my $logLayout_ref = $logHash{_Layout_ref};
 
     my @line;    # Collect the results
     foreach ( @$logLayout_ref[ 1 .. $#{$logLayout_ref} ] ) {
         if ( ref($_) eq 'ARRAY' ) {
-            push @line,
-              join(
-                @{$_}[0],
-                map( ( $logHash{$_} || '' ), @{$_}[ 1 .. $#{$_} ] )
-              );
+            my @subfields;
+            foreach ( @{$_}[ 1 .. $#{$_} ] ) {
+                my $ph = ( $_ eq '*' ) ? "\001EXT\001" : '';
+                push @subfields, ( $logHash{_fields}{$_} || '' ) . $ph;
+                for my $i ( 0 .. $#fields ) {
+                    $fields[$i] = '' if $fields[$i] eq $_;
+                }
+            }
+            push @line, join( @{$_}[0], @subfields );
         }
         else {
-            push @line, ( $logHash{$_} || '' );
+            my $ph = ( $_ eq '*' ) ? "\001EXT\001" : '';
+            push @line, ( $logHash{_fields}{$_} || '' ) . $ph;
+            for my $i ( 0 .. $#fields ) {
+                $fields[$i] = '' if $fields[$i] eq $_;
+            }
         }
     }
 
     # Extract non-blank characters from delimiter for encoding
-    my ($delim) = @$logLayout_ref[0] =~ m/(\S+)/;
-    my $ldelim  = @$logLayout_ref[0];
-    my $tdelim  = @$logLayout_ref[0];
+    my ($delim) = @$logLayout_ref[0] =~ m/(\S+)/;    # Field separator
+    my $ldelim = @$logLayout_ref[0];                 # Leading delimiter
+    my $tdelim = @$logLayout_ref[0];                 # Trailing delimiter
     $ldelim =~ s/^\s+//g;
     $tdelim =~ s/\s+$//g;
 
@@ -273,20 +291,24 @@ sub _flattenLog {
         map { s/([$delim\n])/'&#255;&#'.ord($1).';'/gex; $_ } @line
       ) . $tdelim;
 
-    print STDERR "FLAT MESSAGE: ($message) \n" if TRACE;
-
-    # Item10764, SMELL UNICODE: actually, perhaps we should open the stream this
-    # way for any encoding, not just utf8. Babar says: check what Catalyst does.
-    unless ( $Foswiki::cfg{Site}{CharSet}
-        && $Foswiki::cfg{Site}{CharSet} =~ /^utf-?8$/ )
-    {
-        if ( utf8::is_utf8($message) ) {
-            require Encode;
-            $message =
-              Encode::encode( $Foswiki::cfg{Site}{CharSet}, $message, 0 );
-        }
+    my $extra = '';
+    foreach ( sort @fields ) {
+        next unless $_;
+        next unless $logHash{_fields}{$_};
+        $extra = join( ' ', $logHash{_fields}{$_} );
     }
 
+    $message =~ s/\001EXT\001/$extra/g;
+
+    #SMELL: This code isn't right for backwards compatibility.
+    #
+    #    unless ($Foswiki::UNICODE) {
+    #    unless ( utf8::is_utf8($message) ) {
+    #        require Encode;
+    #        $message = Encode::decode( 'utf-8', $message, 0 );
+    #    }
+
+    print STDERR "FLAT MESSAGE: ($message) \n" if TRACE;
     return $message;
 }
 
@@ -331,8 +353,9 @@ sub eachEventSince {
     }
 
     unless ( $handler && $handler->can('eachEventSince') ) {
-        Foswiki::Func::writeWarning(
-            "eachEventSince not supported for $eventHandler.");
+        Foswiki::Func::writeWarning( "eachEventSince not supported for"
+              . ( $eventHandler || "unknown" )
+              . "." );
         require Foswiki::ListIterator;
         return new Foswiki::ListIterator( [] );
     }

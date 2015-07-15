@@ -3,9 +3,9 @@ package Foswiki::Logger::LogDispatch::EventIterator;
 
 use strict;
 use warnings;
-use utf8;
 use Assert;
 use Fcntl qw(:flock);
+use Foswiki::Time qw(-nofoswiki);
 
 # Private subclass of LineIterator that splits events into fields
 require Foswiki::LineIterator;
@@ -17,13 +17,6 @@ sub new {
     $this->{_threshold} = $threshold;
     $this->{_level}     = $level;
     return $this;
-}
-
-sub DESTROY {
-    my $this = shift;
-    flock( $this->{handle}, LOCK_UN )
-      if ( defined $this->{logLocked} );
-    close( delete $this->{handle} ) if ( defined $this->{handle} );
 }
 
 sub hasNext {

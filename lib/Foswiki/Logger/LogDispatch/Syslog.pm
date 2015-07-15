@@ -3,7 +3,6 @@ package Foswiki::Logger::LogDispatch::Syslog;
 
 use strict;
 use warnings;
-use utf8;
 use Assert;
 
 =begin TML
@@ -91,7 +90,7 @@ sub _flattenLog {
       ? $Foswiki::cfg{Log}{LogDispatch}{Syslog}{Layout}{$level}
       : $Foswiki::cfg{Log}{LogDispatch}{Syslog}{Layout}{DEFAULT};
 
-    push @_, Layout_ref => $logLayout_ref;
+    push @_, _Layout_ref => $logLayout_ref;
 
     goto &Foswiki::Logger::LogDispatch::_flattenLog;
 }

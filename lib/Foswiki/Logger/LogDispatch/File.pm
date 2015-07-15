@@ -1,9 +1,28 @@
 # See bottom of file for license and copyright information
+package Foswiki::Logger::LogDispatch::File::EventIterator;
+use strict;
+use warnings;
+use Assert;
+
+use Fcntl qw(:flock);
+
+# Internal class for Logfile iterators.
+# So we don't break encapsulation of file handles.  Open / Close in same file.
+our @ISA = qw/Foswiki::Logger::LogDispatch::EventIterator/;
+
+# # Object destruction
+# # Release locks and file
+sub DESTROY {
+    my $this = shift;
+    flock( $this->{handle}, LOCK_UN )
+      if ( defined $this->{logLocked} );
+    close( delete $this->{handle} ) if ( defined $this->{handle} );
+}
+
 package Foswiki::Logger::LogDispatch::File;
 
 use strict;
 use warnings;
-use utf8;
 use Assert;
 
 =begin TML
@@ -49,7 +68,7 @@ sub new {
             info => [
                 ' | ', [ ' ', 'timestamp', 'level' ],
                 'user', 'action',
-                'webTopic', [ ' ', 'extra', 'agent', ],
+                'webTopic', [ ' ', 'extra', 'agent', '*' ],
                 'remoteAddr'
             ],
             DEFAULT => [
@@ -61,6 +80,8 @@ sub new {
     }
 
     if ( $Foswiki::cfg{Log}{LogDispatch}{File}{Enabled} ) {
+        my $logdir = $Foswiki::cfg{Log}{Dir};
+        Foswiki::Configure::Load::expandValue($logdir);
         foreach my $file ( keys %FileRange ) {
             my ( $min_level, $max_level, $filter ) =
               split( /:/, $FileRange{$file}, 3 );
@@ -74,7 +95,7 @@ sub new {
                         name      => 'file-' . $file,
                         min_level => $min_level,
                         max_level => $max_level,
-                        filename  => "$Foswiki::cfg{Log}{Dir}/$file.log",
+                        filename  => "$logdir/$file.log",
                         mode      => '>>',
                         binmode   => $logd->binmode(),
                         newline   => 1,
@@ -91,7 +112,7 @@ sub new {
                         name      => 'file-' . $file,
                         min_level => $min_level,
                         max_level => $max_level,
-                        filename  => "$Foswiki::cfg{Log}{Dir}/$file.log",
+                        filename  => "$logdir/$file.log",
                         mode      => '>>',
                         binmode   => $logd->binmode(),
                         newline   => 1,
@@ -130,7 +151,7 @@ sub _flattenLog {
       ? $Foswiki::cfg{Log}{LogDispatch}{File}{Layout}{$level}
       : $Foswiki::cfg{Log}{LogDispatch}{File}{Layout}{DEFAULT};
 
-    push @_, Layout_ref => $logLayout_ref;
+    push @_, _Layout_ref => $logLayout_ref;
 
     goto &Foswiki::Logger::LogDispatch::_flattenLog;
 }
@@ -173,9 +194,10 @@ sub eachEventSince() {
     }
 
     my $fh;
-    if ( open( $fh, '<', $log ) ) {
+    if ( open( $fh, '<:encoding(utf-8)', $log ) ) {
         my $logIt =
-          new Foswiki::Logger::LogDispatch::EventIterator( $fh, $time, $level );
+          new Foswiki::Logger::LogDispatch::File::EventIterator( $fh, $time,
+            $level );
         push( @iterators, $logIt );
         $logIt->{logLocked} =
           eval { flock( $fh, LOCK_SH ) }; # No error in case on non-flockable FS; eval in case flock not supported.

@@ -3,7 +3,6 @@ package Foswiki::Logger::LogDispatch::Screen;
 
 use strict;
 use warnings;
-use utf8;
 use Assert;
 
 =begin TML
@@ -15,7 +14,7 @@ use Log::Dispatch to allow logging to almost anything.
 =cut
 
 use Log::Dispatch;
-use Foswiki::Time                               ();
+use Foswiki::Time qw(-nofoswiki);
 use Foswiki::ListIterator                       ();
 use Foswiki::Configure::Load                    ();
 use Foswiki::Logger::LogDispatch::EventIterator ();
@@ -88,7 +87,7 @@ sub _flattenLog {
       ? $Foswiki::cfg{Log}{LogDispatch}{Screen}{Layout}{$level}
       : $Foswiki::cfg{Log}{LogDispatch}{Screen}{Layout}{DEFAULT};
 
-    push @_, Layout_ref => $logLayout_ref;
+    push @_, _Layout_ref => $logLayout_ref;
 
     goto &Foswiki::Logger::LogDispatch::_flattenLog;
 }
